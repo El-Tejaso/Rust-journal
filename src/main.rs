@@ -141,24 +141,65 @@ fn main() {
         // process input
         if input.starts_with("exit") {
             break;
+        } else if input.trim() == "" {
+            continue;
+        } else if input.starts_with("-") && input.trim() == "-" {
+            continue;
         }
 
-        let mut content = load_journal(&name, &date);
+        let new_content = append_to_journal(&name, date, input);
 
-        if input.starts_with("-") || input == "" {
-            if input == "" {
-                content = new_journal_text(&name, &date);
+        save_journal(&name, &date, &new_content);
+    }
+}
+
+fn append_to_journal(name: &String, date: DateTime<Local>, input: String) -> String {
+    let mut content = load_journal(name, &date);
+    if input == "" {
+        content = new_journal_text(name, &date);
+    }
+
+    if input.starts_with("-") {
+        push_block(date, &input, &mut content);
+    } else if input == "~" {
+        toggle_block(&mut content);
+    } else {
+        push_line(date, input, &mut content);
+    }
+    content
+}
+
+fn push_block(date: DateTime<Local>, input: &String, content: &mut String) {
+    let new_line = journal_line(&date, 0, input[1..].trim());
+    content.push_str("\n");
+    content.push_str(&new_line);
+}
+
+fn push_line(date: DateTime<Local>, input: String, content: &mut String) {
+    let new_line = journal_line(&date, 1, input.trim());
+    content.push_str(&new_line);
+}
+
+fn toggle_block(content: &mut String) {
+    let a = content.rfind("\n\n");
+    let b = content.rfind("\n\t");
+    if let Some(newlines) = a {
+        if let Some(nl_tab) = b {
+            if newlines < nl_tab {
+                let mut new_content = String::from("");
+                new_content.push_str(&content[0..nl_tab]);
+                new_content.push_str("\n\n");
+                new_content.push_str(&content[(nl_tab + 2)..]);
+                content.clear();
+                content.push_str(&new_content[..]);
+            } else {
+                let mut new_content = String::from("");
+                new_content.push_str(&content[0..newlines]);
+                new_content.push_str("\n\t");
+                new_content.push_str(&content[(newlines + 2)..]);
+                content.clear();
+                content.push_str(&new_content[..]);
             }
-
-            let new_line = journal_line(&date, 0, input[1..].trim());
-
-            content.push_str("\n");
-            content.push_str(&new_line);
-        } else {
-            let new_line = journal_line(&date, 1, input.trim());
-            content.push_str(&new_line);
-        };
-
-        save_journal(&name, &date, &content);
+        }
     }
 }
