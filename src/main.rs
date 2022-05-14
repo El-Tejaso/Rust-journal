@@ -13,11 +13,24 @@ fn datestamp(time: &DateTime<Local>) -> String {
     format!("{}/{}/{}", time.year(), time.month(), time.day())
 }
 
+fn two_dig_number(num: u32) -> String {
+    if num < 10 {
+        return format!("0{}", num);
+    }
+
+    return format!("{}", num);
+}
+
 fn timestamp(time: &DateTime<Local>) -> String {
     let (pm, hour) = time.hour12();
     let am_pm = if pm { "pm" } else { "am" };
 
-    format!("{}:{} {}", hour, time.minute(), am_pm)
+    format!(
+        "{}:{} {}",
+        &two_dig_number(hour),
+        &two_dig_number(time.minute()),
+        am_pm
+    )
 }
 
 fn read_file(path: &str) -> io::Result<String> {
@@ -65,22 +78,23 @@ fn new_journal_text(name: &str, date: &DateTime<Local>) -> String {
     format!("{} - {} {}\n", name, weekday, ds)
 }
 
-fn append_journal_line(
-    journal_text: String,
-    date: &DateTime<Local>,
-    indent: usize,
-    contents: &str,
-) -> String {
-    let tabs = "\t".repeat(indent);
-    let line: String = format!("{}{} - {}", &tabs, &timestamp(date), contents);
-    let new_journal_text = format!("{}\n{}", &journal_text, line);
+fn journal_line(date: &DateTime<Local>, indent: usize, contents: &str) -> String {
+    let mut line = String::from("\n");
 
-    return new_journal_text;
+    for _i in 0..indent {
+        line.push_str("\t");
+    }
+
+    line.push_str(&timestamp(&date));
+    line.push_str(" - ");
+    line.push_str(&contents);
+
+    return line;
 }
 
 fn load_journal(name: &str, date: &DateTime<Local>) -> String {
     let dir: String = journal_dir(&name, &date);
-    let time = timestamp(date);
+    let time = timestamp(&date);
 
     match read_file(&dir) {
         Ok(str) => str,
@@ -130,13 +144,19 @@ fn main() {
         }
 
         let mut content = load_journal(&name, &date);
-        content = match input {
-            _ => {
-                if content == "" {
-                    content = new_journal_text(&name, &date);
-                }
-                append_journal_line(content, &date, 0, &input)
+
+        if input.starts_with("-") || input == "" {
+            if input == "" {
+                content = new_journal_text(&name, &date);
             }
+
+            let new_line = journal_line(&date, 0, input[1..].trim());
+
+            content.push_str("\n");
+            content.push_str(&new_line);
+        } else {
+            let new_line = journal_line(&date, 1, input.trim());
+            content.push_str(&new_line);
         };
 
         save_journal(&name, &date, &content);
