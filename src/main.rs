@@ -1,7 +1,9 @@
 use chrono::{self, Datelike, Timelike, Weekday};
 use chrono::{DateTime, Local};
+use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io;
+use std::io::{self};
+use std::path::PathBuf;
 
 const JOURNALS_ROOT_DIR: &str = "./Journals";
 
@@ -33,37 +35,37 @@ fn timestamp(time: &DateTime<Local>) -> String {
     )
 }
 
-fn read_file(path: &str) -> io::Result<String> {
+fn read_file(path: &PathBuf) -> io::Result<String> {
     return fs::read_to_string(path);
 }
 
-fn write_file(path_str: &str, contents: &str) {
-    let path = std::path::Path::new(path_str);
+fn write_file(path: &PathBuf, contents: &str) {
     if let Some(prefix) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(prefix) {
-            println!("Could not parent directories for {}: {}", path_str, e);
+            println!("Could not parent directories for {:#?}: {}", path, e);
 
             return;
         }
     }
 
     if let Err(e) = fs::write(path, contents) {
-        println!("Could not write journal {}: {}", path_str, e);
+        println!("Could not write journal {:#?}: {}", path, e);
     }
 }
 
-fn journal_dir(name: &str, date: &DateTime<Local>) -> String {
-    format!(
-        "{}/{}/{}/{}/{}.txt",
-        JOURNALS_ROOT_DIR,
-        name,
-        date.year(),
-        date.month(),
-        date.day()
-    )
+fn journal_dir(name: &OsStr, date: &DateTime<Local>) -> PathBuf {
+    let mut path = PathBuf::new();
+
+    path.push(JOURNALS_ROOT_DIR);
+    path.push(name);
+    path.push(format!("{}", date.year()));
+    path.push(format!("{}", date.month()));
+    path.push(format!("{}.txt", date.day()));
+
+    return path;
 }
 
-fn new_journal_text(name: &str, date: &DateTime<Local>) -> String {
+fn new_journal_text(name: &OsStr, date: &DateTime<Local>) -> String {
     let ds = datestamp(date);
     let weekday = match date.weekday() {
         Weekday::Mon => "Monday",
@@ -75,7 +77,7 @@ fn new_journal_text(name: &str, date: &DateTime<Local>) -> String {
         Weekday::Sun => "Sunday",
     };
 
-    format!("{} - {} {}\n", name, weekday, ds)
+    format!("{} - {} {}\n", name.to_string_lossy(), weekday, ds)
 }
 
 fn journal_line(date: &DateTime<Local>, indent: usize, contents: &str) -> String {
@@ -92,21 +94,27 @@ fn journal_line(date: &DateTime<Local>, indent: usize, contents: &str) -> String
     return line;
 }
 
-fn load_journal(name: &str, date: &DateTime<Local>) -> String {
-    let dir: String = journal_dir(&name, &date);
-    let time = timestamp(&date);
+fn load_journal(name: &OsStr, date: &DateTime<Local>) -> String {
+    let dir: PathBuf = journal_dir(&name, &date);
+    let date = datestamp(&date);
+
+    if !dir.exists() {
+        return String::from("");
+    }
 
     match read_file(&dir) {
         Ok(str) => str,
-        _ => {
-            println!("Couldn't read the contents of {} for {}", name, &time);
-            String::from("")
+        Err(e) => {
+            panic!(
+                "Couldn't read the contents of {:#?} for {}: {}",
+                name, &date, e
+            );
         }
     }
 }
 
-fn save_journal(name: &str, date: &DateTime<Local>, text: &str) {
-    let dir: String = journal_dir(&name, &date);
+fn save_journal(name: &OsStr, date: &DateTime<Local>, text: &str) {
+    let dir: PathBuf = journal_dir(&name, &date);
 
     write_file(&dir, &text);
 }
@@ -123,28 +131,161 @@ fn get_input() -> String {
     return input;
 }
 
-fn display_journal(name: &str) {
+fn display_journal(name: &OsStr) {
     let date = now();
     let content = load_journal(&name, &date);
     println!("{}", &content);
 }
 
+fn get_journals() -> Result<Vec<OsString>, io::Error> {
+    let mut dirs: Vec<OsString>;
+
+    match std::path::Path::new(JOURNALS_ROOT_DIR).read_dir() {
+        Err(e) => {
+            return Err(e);
+        }
+        Ok(dir_entries) => {
+            dirs = Vec::new();
+            for dir_entry in dir_entries {
+                match dir_entry {
+                    Ok(dir) => {
+                        let path = dir.path();
+                        if !path.is_file() {
+                            if let Some(filename) = path.file_name() {
+                                dirs.push(OsString::from(filename));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if dirs.len() == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "There are no journals.",
+                ));
+            }
+
+            return Ok(dirs);
+        }
+    }
+}
+
+fn pick_journal() -> OsString {
+    let available_journals = get_journals();
+    let name = match available_journals {
+        Ok(journals) => pick_journal_from_existing(journals),
+        Err(_) => pick_new_journal_name(),
+    };
+
+    let date = now();
+    let content = load_journal(&name, &date);
+    if content == "" {
+        save_journal(&name, &date, &new_journal_text(&name, &date));
+    }
+
+    return name;
+}
+
+fn pick_new_journal_name() -> OsString {
+    loop {
+        println!("Enter the name of your new journal:");
+        let name = get_input();
+
+        if let Ok(available_journals) = get_journals() {
+            if let Some(existing_name) = find_journal(&name, &available_journals) {
+                println!(
+                    "That name already refers to the journal {}, please pick another one.",
+                    existing_name.to_string_lossy()
+                );
+            }
+        }
+
+        return OsString::from(name);
+    }
+}
+
+fn pick_journal_from_existing(journals: Vec<OsString>) -> OsString {
+    loop {
+        print_available_journals(&journals);
+
+        let input = get_input();
+        if let Some(value) = find_journal(&input, &journals) {
+            return value;
+        }
+
+        println!("Input was invalid, try again");
+    }
+}
+
+fn print_available_journals(journals: &Vec<OsString>) {
+    println!("Select a journal:");
+    for (i, journal_name) in journals.iter().enumerate() {
+        println!("[{}] - {}", i, journal_name.to_string_lossy());
+    }
+}
+
+fn find_journal(input: &str, journals: &Vec<OsString>) -> Option<OsString> {
+    match usize::from_str_radix(&input, 10) {
+        Ok(index) => {
+            if index < journals.len() {
+                return Some(OsString::from(&journals[index]));
+            }
+        }
+        Err(_) => {
+            let input_lower = input.to_ascii_lowercase();
+            for name in journals {
+                let name_lower = String::from(name.to_string_lossy()).to_ascii_lowercase();
+                println!("name_lower {}", name_lower);
+                if name_lower.starts_with(&input_lower) {
+                    return Some(OsString::from(name));
+                }
+            }
+        }
+    }
+
+    return None;
+}
+
 fn main() {
-    let name: String = String::from("Personal");
+    let mut name = pick_journal();
+    let mut err = String::from("");
 
     loop {
         display_journal(&name);
+
+        if err.len() > 0 {
+            println!("{}", &err);
+            err = String::from("");
+        }
 
         let input = get_input();
         let date = now();
 
         // process input
-        if input.starts_with("exit") {
-            break;
-        } else if input.trim() == "" {
+        if input.trim() == "" {
             continue;
         } else if input.starts_with("-") && input.trim() == "-" {
             continue;
+        } else if input.starts_with("exit") {
+            break;
+        } else if input.starts_with("set ") {
+            match get_journals() {
+                Ok(journals) => {
+                    let rest = &input[4..];
+                    if let Some(journal_name) = find_journal(rest, &journals) {
+                        name = journal_name;
+                    } else {
+                        err = format!("{} not found.", rest);
+                    }
+
+                    continue;
+                },
+                _ => {
+
+                }
+            }
         }
 
         let new_content = append_to_journal(&name, date, input);
@@ -153,11 +294,8 @@ fn main() {
     }
 }
 
-fn append_to_journal(name: &String, date: DateTime<Local>, input: String) -> String {
+fn append_to_journal(name: &OsStr, date: DateTime<Local>, input: String) -> String {
     let mut content = load_journal(name, &date);
-    if input == "" {
-        content = new_journal_text(name, &date);
-    }
 
     if input.starts_with("-") {
         push_block(date, &input, &mut content);
