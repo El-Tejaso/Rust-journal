@@ -1,9 +1,10 @@
-use chrono::{self, Datelike, Timelike, Weekday};
+use chrono::{self, Datelike, Duration, Timelike, Weekday};
 use chrono::{DateTime, Local};
 use std::ffi::{OsStr, OsString};
-use std::fs;
-use std::io::{self};
+use std::fs::{self};
+use std::io::{self, ErrorKind};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 const JOURNALS_ROOT_DIR: &str = "./Journals";
 
@@ -53,14 +54,21 @@ fn write_file(path: &PathBuf, contents: &str) {
     }
 }
 
-fn journal_dir(name: &OsStr, date: &DateTime<Local>) -> PathBuf {
+fn journal_root_dir(name: &OsStr) -> PathBuf {
     let mut path = PathBuf::new();
 
     path.push(JOURNALS_ROOT_DIR);
     path.push(name);
+
+    return path;
+}
+
+fn journal_dir(name: &OsStr, date: &DateTime<Local>) -> PathBuf {
+    let mut path = journal_root_dir(name);
+
     path.push(format!("{}", date.year()));
-    path.push(format!("{}", date.month()));
-    path.push(format!("{}.txt", date.day()));
+    path.push(format!("{}", &two_dig_number(date.month())));
+    path.push(format!("{}.txt", &two_dig_number(date.day())));
 
     return path;
 }
@@ -94,23 +102,32 @@ fn journal_line(date: &DateTime<Local>, indent: usize, contents: &str) -> String
     return line;
 }
 
-fn load_journal(name: &OsStr, date: &DateTime<Local>) -> String {
+fn load_journal_err(name: &OsStr, date: &DateTime<Local>) -> Result<String, std::io::Error> {
     let dir: PathBuf = journal_dir(&name, &date);
-    let date = datestamp(&date);
 
-    if !dir.exists() {
-        return String::from("");
-    }
+    return read_file(&dir);
+}
 
-    match read_file(&dir) {
+// This will initialize a journal if not present.
+fn load_journal(name: &OsStr, date: &DateTime<Local>) -> String {
+    let datestamp = datestamp(&date);
+    return match load_journal_err(name, date) {
         Ok(str) => str,
         Err(e) => {
+            if e.kind() == ErrorKind::NotFound {
+                let text = new_journal_text(name, date);
+                save_journal(name, date, &text);
+                return text;
+            }
+
             panic!(
-                "Couldn't read the contents of {:#?} for {}: {}",
-                name, &date, e
+                "Couldn't read the contents journal {} for {}: {}",
+                name.to_string_lossy(),
+                &datestamp,
+                e
             );
         }
-    }
+    };
 }
 
 fn save_journal(name: &OsStr, date: &DateTime<Local>, text: &str) {
@@ -119,7 +136,7 @@ fn save_journal(name: &OsStr, date: &DateTime<Local>, text: &str) {
     write_file(&dir, &text);
 }
 
-fn get_input() -> String {
+fn get_input_str() -> String {
     let stdin = io::stdin();
 
     let mut input = String::from("");
@@ -128,6 +145,12 @@ fn get_input() -> String {
     }
 
     input = input.trim_end().to_string();
+
+    if input == "/exit" {
+        clear_screen();
+        std::process::exit(0);
+    }
+
     return input;
 }
 
@@ -175,42 +198,45 @@ fn get_journals() -> Result<Vec<OsString>, io::Error> {
 fn pick_journal() -> OsString {
     let available_journals = get_journals();
     let name = match available_journals {
-        Ok(journals) => pick_journal_from_existing(journals),
+        Ok(journals) => pick_journal_from_existing(&journals),
         Err(_) => pick_new_journal_name(),
     };
-
-    let date = now();
-    let content = load_journal(&name, &date);
-    if content == "" {
-        save_journal(&name, &date, &new_journal_text(&name, &date));
-    }
 
     return name;
 }
 
 fn pick_new_journal_name() -> OsString {
     loop {
+        clear_screen();
         println!("Enter the name of your new journal:");
-        let name = get_input();
+        let name = get_input_str();
 
         if let Ok(available_journals) = get_journals() {
             if let Some(existing_name) = find_journal(&name, &available_journals) {
                 println!(
-                    "That name already refers to the journal {}, please pick another one.",
+                    "That name already refers to the journal '{}', please pick another one.",
                     existing_name.to_string_lossy()
                 );
             }
         }
 
-        return OsString::from(name);
+        let name = OsString::from(name);
+        let date = now();
+
+        if let Err(_) = load_journal_err(&name, &date) {
+            save_journal(&name, &date, &new_journal_text(&name, &date));
+        }
+
+        return name;
     }
 }
 
-fn pick_journal_from_existing(journals: Vec<OsString>) -> OsString {
+fn pick_journal_from_existing(journals: &Vec<OsString>) -> OsString {
     loop {
+        clear_screen();
         print_available_journals(&journals);
 
-        let input = get_input();
+        let input = get_input_str();
         if let Some(value) = find_journal(&input, &journals) {
             return value;
         }
@@ -248,11 +274,16 @@ fn find_journal(input: &str, journals: &Vec<OsString>) -> Option<OsString> {
     return None;
 }
 
+fn clear_screen() {
+    print!("{}c", 27 as char);
+}
+
 fn main() {
     let mut name = pick_journal();
     let mut err = String::from("");
 
     loop {
+        clear_screen();
         display_journal(&name);
 
         if err.len() > 0 {
@@ -260,37 +291,152 @@ fn main() {
             err = String::from("");
         }
 
-        let input = get_input();
+        let input = get_input_str();
         let date = now();
 
         // process input
         if input.trim() == "" {
             continue;
-        } else if input.starts_with("-") && input.trim() == "-" {
+        } else if input.trim() == "-" {
             continue;
-        } else if input.starts_with("exit") {
-            break;
-        } else if input.starts_with("set ") {
-            match get_journals() {
-                Ok(journals) => {
-                    let rest = &input[4..];
-                    if let Some(journal_name) = find_journal(rest, &journals) {
-                        name = journal_name;
-                    } else {
-                        err = format!("{} not found.", rest);
-                    }
-
-                    continue;
-                },
-                _ => {
-
+        } else if input.starts_with("/set") {
+            if let Ok(available_journals) = get_journals() {
+                if input.len() == "/set".len() {
+                    name = pick_journal_from_existing(&available_journals);
                 }
+            } else {
+                err = String::from("No journals available");
             }
+            continue;
+        } else if input == "/new" {
+            name = pick_new_journal_name();
+            continue;
+        } else if input.starts_with("/last") || input.starts_with("/prev") {
+            display_prev_journals_input_loop(&name, &date, 20);
+            continue;
+        } else if input.starts_with("/time") {
+            todo!();
+        } else if input.starts_with("/") {
+            continue;
         }
 
         let new_content = append_to_journal(&name, date, input);
 
         save_journal(&name, &date, &new_content);
+    }
+}
+
+fn display_prev_journals(name: &OsStr, date: &DateTime<Local>, page_size: u32, mut page_num: u32) {
+    clear_screen();
+    if page_num > 0 {
+        page_num -= 1;
+    }
+
+    let start = page_size * page_num;
+    let end = start + page_size;
+
+    let mut count = 0;
+    let mut current_date = date.clone();
+
+    let total_num_years: i64;
+    match get_journal_num_years(name) {
+        Ok(num) => {
+            if num == 0 {
+                println!(
+                    "You don't have any entries in the journal {}",
+                    name.to_string_lossy()
+                );
+                return;
+            }
+
+            total_num_years = num as i64;
+        }
+        Err(e) => {
+            println!("Couldn't find previous journals: {}", e);
+            return;
+        }
+    }
+
+    let mut journals: Vec<String> = Vec::new();
+    // not particularly efficient at all, but a lot simpler to code, and viable because
+    // I don't think anyone will ever write enough journals in their lifetimes to make this algorithm
+    // noticeably slow
+    loop {
+        if let Ok(journal) = load_journal_err(name, &current_date) {
+            if count >= start {
+                journals.push(journal);
+            }
+
+            count += 1;
+        }
+
+        if count >= end {
+            break;
+        }
+
+        current_date = current_date - Duration::days(1);
+        if (date.signed_duration_since(current_date).num_days() / 365) > total_num_years {
+            break;
+        }
+    }
+
+    journals.reverse();
+    for (i, journal_text) in journals.iter().enumerate() {
+        if page_num == 0 && i == (journals.len() - 1) {
+            println!("\n\n\n---------------- <latest entry> ----------------\n\n");
+        } else {
+            println!(
+                "\n\n\n---------------- <latest - {}> ----------------\n\n",
+                journals.len() - 1 - i 
+            );
+        }
+
+        println!("{}", &journal_text);
+    }
+
+    println!("\n\n");
+    if journals.len() == 0 {
+        println!(
+            "No entries were found for page {} with a page size of {}.",
+            page_num, page_size
+        );
+    } else {
+        println!(
+            "Viewing the last {} to {} entries",
+            start + 1,
+            start + 1 + (journals.len() as u32)
+        );
+        if journals.len() != page_size as usize {
+            println!("(Only {}/{} entries were found)", journals.len(), page_size);
+        }
+    }
+}
+
+fn get_journal_num_years(name: &OsStr) -> Result<usize, io::Error> {
+    let root_dir = journal_root_dir(name);
+    let dirs = std::fs::read_dir(root_dir)?;
+
+    Ok(dirs.collect::<Vec<io::Result<std::fs::DirEntry>>>().len())
+}
+
+fn get_input<T: std::str::FromStr>(message: &str) -> Result<T, <T as FromStr>::Err> {
+    println!("{}", message);
+    let input = get_input_str();
+
+    return input.parse::<T>();
+}
+
+fn display_prev_journals_input_loop(name: &OsStr, date: &DateTime<Local>, page_size: u32) {
+    let mut page = 0;
+    loop {
+        display_prev_journals(name, date, page_size, page);
+        if let Ok(page_num) =
+            get_input::<u32>("input a page number (1 or more), or anything else to go back")
+        {
+            page = page_num;
+        } else {
+            break;
+        }
     }
 }
 

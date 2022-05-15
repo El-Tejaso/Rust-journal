@@ -13,19 +13,13 @@
         -[done]  else it must ask the user to show a particular journal.
             - this is so that if we are screen-recording or something, we are less likely to accidentally show private entries.
         -[done]  inputting "set j(ournal)? <journal_name> or set 0" must be able to change the current journal name
-        -> inputting "new j(ournal)? <journal_name> must create a new journal.
-            - we need to add journal at the end, because what if we want to write about this new thing that we just got?
-                like: "new strategy:"
-                    it is 
-            - and the reason why we don't want to preface commands with / or similar is because we will forget to add it and write unwanted stuff into the journal
-        - 
-        
-
+        -[done] inputting "new" must take you to the new journal screen
 
 - Reading and writing to a journal. Requirements:
     Writing requirements:
         - Each entry is a block. A block consists of several lines.
-            The first line isn't indented, but the following are.
+            -> The first line isn't indented, but the following are.
+                I'll implement this later.
             The final line is empty, and marks the beginning of a new block.
             Each line is timestamped
         
@@ -35,17 +29,19 @@
 
         - [done] each line must have the current timestamp.
             - [done I think] If I try to write to a journal I still have open from a previous day, the program must create a new journal automatically
+        - [done] console needs to clear itself each time
 
     Reading requirements:
         - [done] Each entry must contain the journal name, the date, and the name of the day. 
         - [ongoing] I must be able to open the journal in notepad, and see exactly the same thing
-        -> inputting "last 5" must read the last 5 entries, and stitch them together
+        - [done] inputting "last 5" must read the last 5 entries, and stitch them together
             - inputting "last 5 2" must read from entry HEAD~5 to HEAD~10 and stitch them together
+            - simplified the hell out of this feature, but it does everything I want. 
         -> inputting "time" or "times" must parse all of the timestamps for each line, and print statistics about time usage.
 
 
     Other Command requirements:
         - inputting any command must not result in writing to the journal, and instead output stats of some kind, or other non-destructive action.
-
+        - inputting "help" must print documentation, clearly stating the above features
 
         
