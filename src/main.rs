@@ -2,7 +2,7 @@ use chrono::{self, Datelike, Duration, Timelike, Weekday};
 use chrono::{DateTime, Local};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self};
-use std::io::{self, ErrorKind};
+use std::io::{self, ErrorKind, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -149,6 +149,14 @@ fn get_input_str() -> String {
     if input == "/exit" {
         clear_screen();
         std::process::exit(0);
+    } else if input.starts_with("?")
+        || input.starts_with("/?")
+        || input.starts_with("?")
+        || input.starts_with("help")
+        || input.starts_with("/help")
+    {
+        print_help();
+        return String::from("");
     }
 
     return input;
@@ -157,6 +165,15 @@ fn get_input_str() -> String {
 fn display_journal(name: &OsStr) {
     let date = now();
     let content = load_journal(&name, &date);
+
+    let has_no_entries = content.matches("-").count() < 2;
+    if has_no_entries {
+        println!(
+            "You haven't put any entries in [{}] yet.\nType '/help' at any time to find out how.\n\n",
+            name.to_string_lossy()
+        );
+    }
+
     println!("{}", &content);
 }
 
@@ -235,6 +252,9 @@ fn pick_journal_from_existing(journals: &Vec<OsString>) -> OsString {
     loop {
         clear_screen();
         print_available_journals(&journals);
+        if journals.len() == 1 {
+            return OsString::from(&journals[0]);
+        }
 
         let input = get_input_str();
         if let Some(value) = find_journal(&input, &journals) {
@@ -280,15 +300,20 @@ fn clear_screen() {
 
 fn main() {
     let mut name = pick_journal();
-    let mut err = String::from("");
+    let mut message = String::from("");
 
     loop {
         clear_screen();
         display_journal(&name);
 
-        if err.len() > 0 {
-            println!("{}", &err);
-            err = String::from("");
+        if message.len() > 0 {
+            println!("\n{}\n", &message);
+            message = String::from("");
+        }
+
+        print!("\ncurrent->{}: ", &name.to_string_lossy());
+        if let Err(_) = io::stdout().flush() {
+            //guyse idk how to handle this one
         }
 
         let input = get_input_str();
@@ -298,13 +323,12 @@ fn main() {
         if input.trim() == "" || input.trim() == "-" {
             continue;
         } else if input.trim().starts_with("/") {
-            if input.starts_with("/set") {
+            if input.starts_with("/set") || input.starts_with("/switch") {
                 if let Ok(available_journals) = get_journals() {
-                    if input.len() == "/set".len() {
-                        name = pick_journal_from_existing(&available_journals);
-                    }
+                    name = pick_journal_from_existing(&available_journals);
                 } else {
-                    err = String::from("No journals available");
+                    // ideally, this line is never ever reached. I am not sure what the best flow here is
+                    message = String::from("No journals available, use /new to make one.");
                 }
             } else if input == "/new" {
                 name = pick_new_journal_name();
@@ -317,12 +341,60 @@ fn main() {
             }
 
             continue;
+        } else if input.starts_with("help") {
+            continue;
         }
 
-        let new_content = append_to_journal(&name, date, input);
-
-        save_journal(&name, &date, &new_content);
+        match append_to_journal(&name, date, input) {
+            Ok(new_content) => {
+                save_journal(&name, &date, &new_content);
+            }
+            Err(e) => {
+                message = e;
+            }
+        }
     }
+}
+
+fn print_help() {
+    clear_screen();
+
+    println!(
+        "
+        
+Type /help from anywhere to access this text.
+
+Type /exit from anywhere to exit this program.
+
+        Journal Writing
+
+Type any text to add an 'entry'. 
+New entries will be added to the current 'block' of lines.
+
+Type a dash (-) followed by an entry start a new block.
+
+Type a tilde (~) on it's own to toggle the last line between an entry and block.
+    (Useful for when you forget to add a dash (-) at the start)
+
+        Journal Reading
+
+Type /prev to view previous entries. 
+
+Type /times to view a time breakdown of how much time elapsed between each block.
+Type /gtime to show a more granular (but much harder to read) time breakdown between each entry.
+
+        Journal Managing
+
+You can have multiple journals.
+
+Type /new to create a new journal. You will be asked to provide a name. 
+
+Type /switch to switch to another journal.
+"
+    );
+
+    println!("Press enter to continue...");
+    get_input_str();
 }
 
 fn display_time_stats(name: &OsStr, date: &DateTime<Local>, granular: bool) {
@@ -460,14 +532,16 @@ fn display_prev_journals(name: &OsStr, date: &DateTime<Local>, page_size: u32, m
 
     journals.reverse();
     for (i, journal_text) in journals.iter().enumerate() {
-        if page_num == 0 && i == (journals.len() - 1) {
-            println!("\n\n\n---------------- <latest entry> ----------------\n\n");
+        let entry_count = if page_num == 0 && i == (journals.len() - 1) {
+            String::from("")
         } else {
-            println!(
-                "\n\n\n---------------- <latest - {}> ----------------\n\n",
-                journals.len() - 1 - i
-            );
-        }
+            format!(" - {}", journals.len() - 1 - i)
+        };
+
+        println!(
+            "\n\n\n---------------- <latest entry{}> ----------------\n\n",
+            &entry_count
+        );
 
         println!("{}", &journal_text);
     }
@@ -480,9 +554,9 @@ fn display_prev_journals(name: &OsStr, date: &DateTime<Local>, page_size: u32, m
         );
     } else {
         println!(
-            "Viewing the last {} to {} entries",
-            start + 1,
-            start + 1 + (journals.len() as u32)
+            "Viewing entries from latest-{} to latest-{}",
+            start + (journals.len() as u32) - 1,
+            start
         );
         if journals.len() != page_size as usize {
             println!("(Only {}/{} entries were found)", journals.len(), page_size);
@@ -518,17 +592,22 @@ fn display_prev_journals_input_loop(name: &OsStr, date: &DateTime<Local>, page_s
     }
 }
 
-fn append_to_journal(name: &OsStr, date: DateTime<Local>, input: String) -> String {
+fn append_to_journal(name: &OsStr, date: DateTime<Local>, input: String) -> Result<String, String> {
     let mut content = load_journal(name, &date);
-
-    if input.starts_with("-") || content.matches("-").count() < 2 {
+    let has_no_entries = content.matches("-").count() < 2;
+    if input.trim() == "~" {
+        if !has_no_entries {
+            toggle_block(&mut content);
+        } else {
+            return Err(String::from("Can't use '~' when there aren't any entries"));
+        }
+    } else if input.starts_with("-") || has_no_entries {
         push_block(date, &input, &mut content);
-    } else if input == "~" {
-        toggle_block(&mut content);
     } else {
         push_line(date, input, &mut content);
     }
-    content
+
+    Ok(content)
 }
 
 fn push_block(date: DateTime<Local>, input: &String, content: &mut String) {

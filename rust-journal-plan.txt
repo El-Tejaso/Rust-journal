@@ -43,6 +43,6 @@
 
     Other Command requirements:
         - inputting any command must not result in writing to the journal, and instead output stats of some kind, or other non-destructive action.
-        - inputting "help" must print documentation, clearly stating the above features
+        - [done] inputting "/help" must print documentation, clearly stating the above features
 
         
