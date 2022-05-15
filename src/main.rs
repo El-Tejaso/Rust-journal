@@ -5,6 +5,7 @@ use std::fs::{self};
 use std::io::{self, ErrorKind, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
+use console::Term;
 
 const JOURNALS_ROOT_DIR: &str = "./Journals";
 
@@ -295,7 +296,8 @@ fn find_journal(input: &str, journals: &Vec<OsString>) -> Option<OsString> {
 }
 
 fn clear_screen() {
-    print!("{}c", 27 as char);
+    let term = Term::stdout();
+    term.clear_screen().expect("failed clearing screen");
 }
 
 fn main() {
@@ -379,17 +381,14 @@ Type a tilde (~) on it's own to toggle the last line between an entry and block.
         Journal Reading
 
 Type /prev to view previous entries. 
-
 Type /times to view a time breakdown of how much time elapsed between each block.
 Type /gtime to show a more granular (but much harder to read) time breakdown between each entry.
 
         Journal Managing
 
 You can have multiple journals.
-
 Type /new to create a new journal. You will be asked to provide a name. 
-
-Type /switch to switch to another journal.
+Type /switch to switch to another journal. This will only work if you have more than one journal.
 "
     );
 
@@ -602,6 +601,11 @@ fn append_to_journal(name: &OsStr, date: DateTime<Local>, input: String) -> Resu
             return Err(String::from("Can't use '~' when there aren't any entries"));
         }
     } else if input.starts_with("-") || has_no_entries {
+        let mut input = input.trim();
+        if input.starts_with("-") {
+            input = &input[1..];
+        }
+        
         push_block(date, &input, &mut content);
     } else {
         push_line(date, input, &mut content);
@@ -610,8 +614,8 @@ fn append_to_journal(name: &OsStr, date: DateTime<Local>, input: String) -> Resu
     Ok(content)
 }
 
-fn push_block(date: DateTime<Local>, input: &String, content: &mut String) {
-    let new_line = journal_line(&date, 0, input[1..].trim());
+fn push_block(date: DateTime<Local>, input: &str, content: &mut String) {
+    let new_line = journal_line(&date, 0, input.trim());
     content.push_str("\n");
     content.push_str(&new_line);
 }
