@@ -295,28 +295,27 @@ fn main() {
         let date = now();
 
         // process input
-        if input.trim() == "" {
+        if input.trim() == "" || input.trim() == "-" {
             continue;
-        } else if input.trim() == "-" {
-            continue;
-        } else if input.starts_with("/set") {
-            if let Ok(available_journals) = get_journals() {
-                if input.len() == "/set".len() {
-                    name = pick_journal_from_existing(&available_journals);
+        } else if input.trim().starts_with("/") {
+            if input.starts_with("/set") {
+                if let Ok(available_journals) = get_journals() {
+                    if input.len() == "/set".len() {
+                        name = pick_journal_from_existing(&available_journals);
+                    }
+                } else {
+                    err = String::from("No journals available");
                 }
-            } else {
-                err = String::from("No journals available");
+            } else if input == "/new" {
+                name = pick_new_journal_name();
+            } else if input.starts_with("/last") || input.starts_with("/prev") {
+                display_prev_journals_input_loop(&name, &date, 20);
+            } else if input.starts_with("/time") {
+                display_time_stats(&name, &date, false);
+            } else if input.starts_with("/gtime") {
+                display_time_stats(&name, &date, true);
             }
-            continue;
-        } else if input == "/new" {
-            name = pick_new_journal_name();
-            continue;
-        } else if input.starts_with("/last") || input.starts_with("/prev") {
-            display_prev_journals_input_loop(&name, &date, 20);
-            continue;
-        } else if input.starts_with("/time") {
-            todo!();
-        } else if input.starts_with("/") {
+
             continue;
         }
 
@@ -324,6 +323,85 @@ fn main() {
 
         save_journal(&name, &date, &new_content);
     }
+}
+
+fn display_time_stats(name: &OsStr, date: &DateTime<Local>, granular: bool) {
+    clear_screen();
+    fn parse_time(line: &str, date: &DateTime<Local>) -> Option<DateTime<Local>> {
+        let colon_pos = line.find(":")?;
+
+        let mut hour = line[colon_pos - 2..colon_pos].parse::<u32>().ok()?;
+        let minute = line[colon_pos + 1..colon_pos + 3].parse::<u32>().ok()?;
+
+        if hour != 12 && &line[colon_pos + 4..colon_pos + 6] == "pm" {
+            hour += 12;
+        }
+
+        let time = date.clone().with_hour(hour)?.with_minute(minute)?;
+
+        return Some(time);
+    }
+
+    let text = load_journal(name, date);
+    let mut times: Vec<(DateTime<Local>, &str)> = Vec::new();
+    let mut start = 0;
+
+    while let Some(len) = text[start..].find("\n") {
+        let end = start + len;
+        let line = &text[start..end];
+        if let Some(time) = parse_time(line, date) {
+            times.push((time, line));
+        }
+
+        start = end + 1;
+    }
+
+    let line = &text[start..];
+    if let Some(time) = parse_time(line, date) {
+        times.push((time, line));
+    }
+
+    println!(
+        "Viewing time breakdown{}:\n\n",
+        match granular {
+            false => "",
+            true => " (granular)",
+        }
+    );
+
+    if times.len() > 0 {
+        println!("{}", times[0].1);
+        let mut block_time = times[0].0.clone();
+
+        for i in 1..times.len() {
+            let is_block = times[i].1.find("\t") == None;
+            if is_block {
+                println!("");
+            }
+
+            if is_block || granular {
+                let dt = times[i].0.signed_duration_since(times[i - 1].0);
+                let dt_from_start = times[i].0.signed_duration_since(times[0].0);
+                let dt_from_block = times[i].0.signed_duration_since(block_time);
+                println!(
+                    "\n\t\t\tsince start: {}m      since block: {}m      since last: {}m\n",
+                    dt_from_start.num_minutes(),
+                    dt_from_block.num_minutes(),
+                    dt.num_minutes()
+                );
+            }
+
+            if is_block {
+                block_time = times[i].0.clone();
+                println!("");
+            }
+
+            println!("{}", times[i].1);
+        }
+    }
+
+    println!("\n\npress enter to go back ...");
+    get_input_str();
 }
 
 fn display_prev_journals(name: &OsStr, date: &DateTime<Local>, page_size: u32, mut page_num: u32) {
@@ -387,7 +465,7 @@ fn display_prev_journals(name: &OsStr, date: &DateTime<Local>, page_size: u32, m
         } else {
             println!(
                 "\n\n\n---------------- <latest - {}> ----------------\n\n",
-                journals.len() - 1 - i 
+                journals.len() - 1 - i
             );
         }
 
@@ -443,7 +521,7 @@ fn display_prev_journals_input_loop(name: &OsStr, date: &DateTime<Local>, page_s
 fn append_to_journal(name: &OsStr, date: DateTime<Local>, input: String) -> String {
     let mut content = load_journal(name, &date);
 
-    if input.starts_with("-") {
+    if input.starts_with("-") || content.matches("-").count() < 2 {
         push_block(date, &input, &mut content);
     } else if input == "~" {
         toggle_block(&mut content);
