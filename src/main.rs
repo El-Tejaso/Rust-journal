@@ -432,6 +432,8 @@ fn display_time_stats(name: &OsStr, date: &DateTime<Local>, granular: bool) {
         times.push((time, line));
     }
 
+    times.push((now(), "<now>"));
+
     println!(
         "Viewing time breakdown{}:\n\n",
         match granular {
@@ -455,10 +457,10 @@ fn display_time_stats(name: &OsStr, date: &DateTime<Local>, granular: bool) {
                 let dt_from_start = times[i].0.signed_duration_since(times[0].0);
                 let dt_from_block = times[i].0.signed_duration_since(block_time);
                 println!(
-                    "\n\t\t\tsince start: {}m      since block: {}m      since last: {}m\n",
-                    dt_from_start.num_minutes(),
-                    dt_from_block.num_minutes(),
-                    dt.num_minutes()
+                    "\nelapsed:\t\tsince start: {:.2}h      since block: {:.2}h      since last: {:.2}h\n",
+                    (dt_from_start.num_minutes() as f64) / 60.0,
+                    (dt_from_block.num_minutes() as f64) / 60.0,
+                    (dt.num_minutes() as f64) / 60.0
                 );
             }
 
