@@ -1,6 +1,6 @@
 # Rust journal
 A rewrite of my python journal, but in rust. 
-It only has the features that I actually use, and while the code is similarly unreadable, it has a much better structure.
+It only has the features that I actually use, and the approach to maintaining state is much better, which in turn made the code a lot better.
 It has the added bonus that you don't need python to be able to run it.
 You can compile it and run it, or just grab the .exe from the releases tab.
 
