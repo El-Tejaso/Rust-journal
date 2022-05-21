@@ -363,32 +363,33 @@ fn print_help() {
 
     println!(
         "
-        
-Type /help from anywhere to access this text.
+Help - Saturday 2022/5/21
 
-Type /exit from anywhere to exit this program.
 
-        Journal Writing
+09:50 am - Before we start:
+    09:50 am - Type / help from anywhere to access this text
+    09:50 am - Type /exit from anywhere to exit this program
 
-Type any text to add an 'entry'. 
-New entries will be added to the current 'block' of lines.
+09:51 am - The basics
+    09:51 am - Type any text to add an 'entry'
+    09:51 am - new entires will be added to the current 'block' of lines
+    09:51 am - like
+    09:51 am - this
 
-Type a dash (-) followed by an entry start a new block.
+09:52 am - Type dash (-) followed by an entry to start a new block
+    09:52 am - Type a (~) on it's own to toggle the last line between being part of a block vs being the start of a new block
 
-Type a tilde (~) on it's own to toggle the last line between an entry and block.
-    (Useful for when you forget to add a dash (-) at the start)
+09:53 am - (Usefull for when you forget a (-) on the line you just entered
 
-        Journal Reading
+09:53 am - Journal Reading
+    09:54 am - Type /prev to view previous entries
+    09:54 am - Type /times to view a time breakdown of how much time elapsed between each block.
+    09:54 am - Type /gtime to show a more granular (but much harder to read) time breakdown between each entry.
 
-Type /prev to view previous entries. 
-Type /times to view a time breakdown of how much time elapsed between each block.
-Type /gtime to show a more granular (but much harder to read) time breakdown between each entry.
-
-        Journal Managing
-
-You can have multiple journals.
-Type /new to create a new journal. You will be asked to provide a name. 
-Type /switch to switch to another journal. This will only work if you have more than one journal.
+09:54 am - Journal Managing
+    09:54 am - You can have multiple journals.
+    09:54 am - Type /new to create a new journal. You will be asked to provide a name.
+    09:54 am - Type /switch to switch to another journal. This will only work if you have more than one journal.
 "
     );
 
