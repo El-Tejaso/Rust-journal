@@ -628,25 +628,44 @@ fn push_line(date: DateTime<Local>, input: String, content: &mut String) {
 }
 
 fn toggle_block(content: &mut String) {
+    fn newlines_to_nl_tab(content: &mut String, newlines:usize) {
+        let mut new_content = String::from("");
+        new_content.push_str(&content[0..newlines]);
+        new_content.push_str("\n\t");
+        new_content.push_str(&content[(newlines + 2)..]);
+        content.clear();
+        content.push_str(&new_content[..]);
+    }
+
+    fn nl_tab_to_newlines(content: &mut String, nl_tab:usize) {
+        let mut new_content = String::from("");
+        new_content.push_str(&content[0..nl_tab]);
+        new_content.push_str("\n\n");
+        new_content.push_str(&content[(nl_tab + 2)..]);
+        content.clear();
+        content.push_str(&new_content[..]);
+    }
+
     let a = content.rfind("\n\n");
     let b = content.rfind("\n\t");
+
+    if a == None && b == None {
+        return;
+    }
+
     if let Some(newlines) = a {
         if let Some(nl_tab) = b {
             if newlines < nl_tab {
-                let mut new_content = String::from("");
-                new_content.push_str(&content[0..nl_tab]);
-                new_content.push_str("\n\n");
-                new_content.push_str(&content[(nl_tab + 2)..]);
-                content.clear();
-                content.push_str(&new_content[..]);
+                nl_tab_to_newlines(content, nl_tab);
             } else {
-                let mut new_content = String::from("");
-                new_content.push_str(&content[0..newlines]);
-                new_content.push_str("\n\t");
-                new_content.push_str(&content[(newlines + 2)..]);
-                content.clear();
-                content.push_str(&new_content[..]);
+                newlines_to_nl_tab(content, newlines);
             }
+        } else {
+            newlines_to_nl_tab(content, newlines);
+        }
+    } else {
+        if let Some(nl_tab) = b {
+            nl_tab_to_newlines(content, nl_tab);
         }
     }
 }
