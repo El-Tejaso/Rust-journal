@@ -34,6 +34,7 @@ Help - Saturday 2022/5/21
     09:54 am - You can have multiple journals.
     09:54 am - Type /new to create a new journal. You will be asked to provide a name.
     09:54 am - Type /switch to switch to another journal. This will only work if you have more than one journal.
+    09:55 am - Type /find to find some text in the journal. You can use this to go back to an entry by string
 ```
 
 

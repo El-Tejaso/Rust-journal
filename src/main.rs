@@ -1,11 +1,13 @@
-use chrono::{self, Datelike, Duration, Timelike, Weekday};
+use chrono::{self, Datelike, Duration, TimeZone, Timelike, Utc, Weekday};
 use chrono::{DateTime, Local};
+use console::Term;
+use std::ascii::AsciiExt;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self};
 use std::io::{self, ErrorKind, Write};
-use std::path::PathBuf;
+use std::num::ParseIntError;
+use std::path::{self, Path, PathBuf};
 use std::str::FromStr;
-use console::Term;
 
 const JOURNALS_ROOT_DIR: &str = "./Journals";
 
@@ -113,7 +115,7 @@ fn load_journal_err(name: &OsStr, date: &DateTime<Local>) -> Result<String, std:
 fn load_journal(name: &OsStr, date: &DateTime<Local>) -> String {
     let datestamp = datestamp(&date);
     return match load_journal_err(name, date) {
-        Ok(str) => str,
+        Ok(str) => str.replace("\r", ""),
         Err(e) => {
             if e.kind() == ErrorKind::NotFound {
                 let text = new_journal_text(name, date);
@@ -178,39 +180,54 @@ fn display_journal(name: &OsStr) {
     println!("{}", &content);
 }
 
-fn get_journals() -> Result<Vec<OsString>, io::Error> {
+enum DirType {
+    File,
+    Folder,
+}
+
+fn get_files_or_folders(path: &Path, dir_type: DirType) -> Result<Vec<OsString>, io::Error> {
     let mut dirs: Vec<OsString>;
 
-    match std::path::Path::new(JOURNALS_ROOT_DIR).read_dir() {
-        Err(e) => {
-            return Err(e);
-        }
-        Ok(dir_entries) => {
-            dirs = Vec::new();
-            for dir_entry in dir_entries {
-                match dir_entry {
-                    Ok(dir) => {
-                        let path = dir.path();
-                        if !path.is_file() {
-                            if let Some(filename) = path.file_name() {
-                                dirs.push(OsString::from(filename));
-                            }
-                        }
+    let dir_entries = path.read_dir()?;
+
+    dirs = Vec::new();
+    for dir_entry in dir_entries {
+        match dir_entry {
+            Ok(dir) => {
+                let path = dir.path();
+
+                let is_dir_type = match dir_type {
+                    DirType::File => path.is_file(),
+                    DirType::Folder => !path.is_file(),
+                };
+
+                if is_dir_type {
+                    if let Some(filename) = path.file_name() {
+                        dirs.push(OsString::from(filename));
                     }
-                    _ => {}
                 }
             }
-
-            if dirs.len() == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "There are no journals.",
-                ));
-            }
-
-            return Ok(dirs);
+            _ => {}
         }
     }
+
+    return Ok(dirs);
+}
+
+fn get_journals() -> Result<Vec<OsString>, io::Error> {
+    let path = path::Path::new(JOURNALS_ROOT_DIR);
+    let res = get_files_or_folders(path, DirType::Folder);
+
+    if let Ok(ref journals) = res {
+        if journals.len() == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "There are no journals.",
+            ));
+        }
+    }
+
+    return res;
 }
 
 fn pick_journal() -> OsString {
@@ -340,6 +357,8 @@ fn main() {
                 display_time_stats(&name, &date, false);
             } else if input.starts_with("/gtime") {
                 display_time_stats(&name, &date, true);
+            } else if input.starts_with("/find") {
+                find_input_loop(&name, &date);
             }
 
             continue;
@@ -372,14 +391,14 @@ Help - Saturday 2022/5/21
 
 09:51 am - The basics
     09:51 am - Type any text to add an 'entry'
-    09:51 am - new entires will be added to the current 'block' of lines
+    09:51 am - new entries will be added to the current 'block' of lines
     09:51 am - like
     09:51 am - this
 
 09:52 am - Type dash (-) followed by an entry to start a new block
     09:52 am - Type a (~) on it's own to toggle the last line between being part of a block vs being the start of a new block
 
-09:53 am - (Usefull for when you forget a (-) on the line you just entered
+09:53 am - (Useful for when you forget a (-) on the line you just entered
 
 09:53 am - Journal Reading
     09:54 am - Type /prev to view previous entries
@@ -478,6 +497,214 @@ fn display_time_stats(name: &OsStr, date: &DateTime<Local>, granular: bool) {
     get_input_str();
 }
 
+#[derive(Copy, Clone, PartialEq)]
+enum Direction {
+    Forwards,
+    Backwards,
+}
+
+fn iterate_journals_dir(
+    name: &OsStr,
+    date: &DateTime<Local>,
+    dir: Direction,
+    mut iter_fn: impl FnMut(&DateTime<Local>, String) -> bool,
+) {
+    let mut current_date = date.clone();
+
+    fn get_year_index(
+        current_date: &DateTime<Local>,
+        years: &Vec<OsString>,
+    ) -> Result<usize, ParseIntError> {
+        let current_year = current_date.year();
+        for index in 0..years.len() {
+            let year = years[index].to_string_lossy().parse::<i32>()?;
+            if year == current_year {
+                return Ok(index);
+            } else if year > current_year {
+                return Ok(index - 1);
+            }
+        }
+
+        return Ok(years.len());
+    }
+
+    let root_dir = journal_root_dir(name);
+    let valid_years = match get_files_or_folders(&root_dir, DirType::Folder) {
+        Ok(folders) => folders,
+        Err(_) => {
+            return;
+        }
+    };
+
+    let current_year_os_str = OsString::from(format!("{}", current_date.year()));
+    let mut current_year_index = get_year_index(&current_date, &valid_years)
+        .expect("Folders in the journal root must all be 4 digit years");
+
+    fn start_of_year(year: i32) -> DateTime<Local> {
+        return chrono::Local.ymd(year, 1, 1).and_hms(0, 0, 0);
+    }
+
+    fn end_of_year(year: i32) -> DateTime<Local> {
+        start_of_year(year + 1) - Duration::days(1)
+    }
+
+    fn parse_year(str: &OsStr) -> i32 {
+        str.to_string_lossy()
+            .parse::<i32>()
+            .expect("Why isn't this a year. What happened??")
+    }
+
+    if &valid_years[current_year_index] != &current_year_os_str {
+        let new_year = parse_year(&valid_years[current_year_index]);
+        current_date = end_of_year(new_year);
+    }
+
+    loop {
+        let this_year = current_date.year();
+
+        while this_year == current_date.year() {
+            if let Ok(journal_text) = load_journal_err(name, &current_date) {
+                if !iter_fn(&current_date, journal_text.replace("\r", "")) {
+                    return;
+                }
+            }
+
+            current_date = match dir {
+                Direction::Forwards => current_date + Duration::days(1),
+                Direction::Backwards => current_date - Duration::days(1),
+            };
+        }
+
+        if dir == Direction::Backwards && current_year_index == 0 {
+            return;
+        }
+
+        current_year_index = match dir {
+            Direction::Forwards => current_year_index + 1,
+            Direction::Backwards => current_year_index - 1,
+        };
+
+        if current_year_index >= valid_years.len() {
+            return;
+        }
+
+        let new_year = parse_year(&valid_years[current_year_index]);
+        current_date = match dir {
+            Direction::Forwards => start_of_year(new_year),
+            Direction::Backwards => end_of_year(new_year),
+        };
+    }
+}
+
+fn find_input_loop(name: &OsStr, date: &DateTime<Local>) {
+    fn iteration(
+        _name: &OsStr,
+        _date: &DateTime<Local>,
+        find_str: &str,
+        journal_text: &str,
+    ) -> bool {
+        if journal_text.to_lowercase().find(&find_str.to_lowercase()) == None {
+            return true;
+        }
+
+        //print journal heading
+        match journal_text.find("\n\n") {
+            None => return true,
+            Some(index) => println!("Found results in {}:\n", &journal_text[0..index]),
+        }
+
+        fn print_highlights(line: &str, find_str_index: usize, symbol: char, count: usize) {
+            print!("    ");
+
+            let mut current_index = 0 as usize;
+            for c in line.chars() {
+                if c == '\t' {
+                    print!("\t");
+                } else {
+                    print!(" ");
+                }
+
+                current_index += 1;
+                if current_index == find_str_index {
+                    break;
+                }
+            }
+
+            for i in 0..count {
+                print!("{}", symbol);
+            }
+
+            println!();
+        }
+
+        // find the block where the text is.
+        for block in journal_text.split("\n\n") {
+            if let Some(index) = block
+                .to_ascii_lowercase()
+                .find(&find_str.to_ascii_lowercase())
+            {
+                // print each line, and highlight the one containing the result
+                for line in block.split("\n") {
+                    match line
+                        .to_ascii_lowercase()
+                        .find(&find_str.to_ascii_lowercase())
+                    {
+                        Some(index) => {
+                            println!("");
+                            print_highlights(line, index, 'v', find_str.len());
+                            println!("--> {}     <--", line);
+                            print_highlights(line, index, '^', find_str.len());
+                            println!("");
+                        }
+                        None => {
+                            println!("    {}", line);
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    let mut current_date = date.clone();
+    let mut find_str = String::from("");
+
+    clear_screen();
+    loop {
+        if &find_str != "" {
+            println!("Searching for \"{}\"", &find_str);
+        }
+
+        if let Ok(find_str_input) = get_input::<String>(
+            "Enter search text, or \">\" to go forwards or backwards, or \":quit\" to go back",
+        ) {
+            clear_screen();
+            let mut new_date = current_date.clone();
+
+            if find_str_input.trim() == "<" || find_str_input.trim() == "" {
+                new_date = current_date - Duration::days(1);
+                println!("searching backwards from {} ...", new_date);
+                iterate_journals_dir(name, &new_date, Direction::Backwards, |date, journal_text| {
+                    current_date = date.clone();
+                    return iteration(name, date, &find_str, &journal_text);
+                });
+            } else if find_str_input.trim() == ">" {
+                new_date = current_date + Duration::days(1);
+                println!("searching forwards from {} ...", new_date);
+                iterate_journals_dir(name, &new_date, Direction::Forwards, |date, journal_text| {
+                    current_date = date.clone();
+                    return iteration(name, date, &find_str, &journal_text);
+                });
+            } else if find_str_input.trim() == ":quit" {
+                break;
+            } else {
+                find_str = find_str_input;
+            }
+        }
+    }
+}
+
 fn display_prev_journals(name: &OsStr, date: &DateTime<Local>, page_size: u32, mut page_num: u32) {
     clear_screen();
     if page_num > 0 {
@@ -488,56 +715,33 @@ fn display_prev_journals(name: &OsStr, date: &DateTime<Local>, page_size: u32, m
     let end = start + page_size;
 
     let mut count = 0;
-    let mut current_date = date.clone();
-
-    let total_num_years: i64;
-    match get_journal_num_years(name) {
-        Ok(num) => {
-            if num == 0 {
-                println!(
-                    "You don't have any entries in the journal {}",
-                    name.to_string_lossy()
-                );
-                return;
-            }
-
-            total_num_years = num as i64;
-        }
-        Err(e) => {
-            println!("Couldn't find previous journals: {}", e);
-            return;
-        }
-    }
-
     let mut journals: Vec<String> = Vec::new();
-    // not particularly efficient at all, but a lot simpler to code, and viable because
-    // I don't think anyone will ever write enough journals in their lifetimes to make this algorithm
-    // noticeably slow
-    loop {
-        if let Ok(journal) = load_journal_err(name, &current_date) {
+
+    iterate_journals_dir(
+        name,
+        date,
+        Direction::Backwards,
+        |_current_date, journal_text| {
             if count >= start {
-                journals.push(journal);
+                journals.push(journal_text);
             }
 
             count += 1;
-        }
 
-        if count >= end {
-            break;
-        }
+            if count >= end {
+                return false;
+            }
 
-        current_date = current_date - Duration::days(1);
-        if (date.signed_duration_since(current_date).num_days() / 365) > total_num_years {
-            break;
-        }
-    }
+            return true;
+        },
+    );
 
     journals.reverse();
     for (i, journal_text) in journals.iter().enumerate() {
         let entry_count = if page_num == 0 && i == (journals.len() - 1) {
             String::from("")
         } else {
-            format!(" - {}", journals.len() - 1 - i)
+            format!(" - {}", (start as usize) + journals.len() - 1 - i)
         };
 
         println!(
@@ -564,13 +768,6 @@ fn display_prev_journals(name: &OsStr, date: &DateTime<Local>, page_size: u32, m
             println!("(Only {}/{} entries were found)", journals.len(), page_size);
         }
     }
-}
-
-fn get_journal_num_years(name: &OsStr) -> Result<usize, io::Error> {
-    let root_dir = journal_root_dir(name);
-    let dirs = std::fs::read_dir(root_dir)?;
-
-    Ok(dirs.collect::<Vec<io::Result<std::fs::DirEntry>>>().len())
 }
 
 fn get_input<T: std::str::FromStr>(message: &str) -> Result<T, <T as FromStr>::Err> {
@@ -608,7 +805,7 @@ fn append_to_journal(name: &OsStr, date: DateTime<Local>, input: String) -> Resu
         if input.starts_with("-") {
             input = &input[1..];
         }
-        
+
         push_block(date, &input, &mut content);
     } else {
         push_line(date, input, &mut content);
@@ -629,7 +826,7 @@ fn push_line(date: DateTime<Local>, input: String, content: &mut String) {
 }
 
 fn toggle_block(content: &mut String) {
-    fn newlines_to_nl_tab(content: &mut String, newlines:usize) {
+    fn newlines_to_nl_tab(content: &mut String, newlines: usize) {
         let mut new_content = String::from("");
         new_content.push_str(&content[0..newlines]);
         new_content.push_str("\n\t");
@@ -638,7 +835,7 @@ fn toggle_block(content: &mut String) {
         content.push_str(&new_content[..]);
     }
 
-    fn nl_tab_to_newlines(content: &mut String, nl_tab:usize) {
+    fn nl_tab_to_newlines(content: &mut String, nl_tab: usize) {
         let mut new_content = String::from("");
         new_content.push_str(&content[0..nl_tab]);
         new_content.push_str("\n\n");
