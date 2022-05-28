@@ -1,7 +1,6 @@
-use chrono::{self, Datelike, Duration, TimeZone, Timelike, Utc, Weekday};
+use chrono::{self, Datelike, Duration, TimeZone, Timelike, Weekday};
 use chrono::{DateTime, Local};
 use console::Term;
-use std::ascii::AsciiExt;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self};
 use std::io::{self, ErrorKind, Write};
@@ -180,12 +179,7 @@ fn display_journal(name: &OsStr) {
     println!("{}", &content);
 }
 
-enum DirType {
-    File,
-    Folder,
-}
-
-fn get_files_or_folders(path: &Path, dir_type: DirType) -> Result<Vec<OsString>, io::Error> {
+fn get_folders(path: &Path) -> Result<Vec<OsString>, io::Error> {
     let mut dirs: Vec<OsString>;
 
     let dir_entries = path.read_dir()?;
@@ -196,12 +190,7 @@ fn get_files_or_folders(path: &Path, dir_type: DirType) -> Result<Vec<OsString>,
             Ok(dir) => {
                 let path = dir.path();
 
-                let is_dir_type = match dir_type {
-                    DirType::File => path.is_file(),
-                    DirType::Folder => !path.is_file(),
-                };
-
-                if is_dir_type {
+                if !path.is_file() {
                     if let Some(filename) = path.file_name() {
                         dirs.push(OsString::from(filename));
                     }
@@ -216,7 +205,7 @@ fn get_files_or_folders(path: &Path, dir_type: DirType) -> Result<Vec<OsString>,
 
 fn get_journals() -> Result<Vec<OsString>, io::Error> {
     let path = path::Path::new(JOURNALS_ROOT_DIR);
-    let res = get_files_or_folders(path, DirType::Folder);
+    let res = get_folders(path);
 
     if let Ok(ref journals) = res {
         if journals.len() == 0 {
@@ -529,7 +518,7 @@ fn iterate_journals_dir(
     }
 
     let root_dir = journal_root_dir(name);
-    let valid_years = match get_files_or_folders(&root_dir, DirType::Folder) {
+    let valid_years = match get_folders(&root_dir) {
         Ok(folders) => folders,
         Err(_) => {
             return;
@@ -607,12 +596,6 @@ fn find_input_loop(name: &OsStr, date: &DateTime<Local>) {
             return true;
         }
 
-        //print journal heading
-        match journal_text.find("\n\n") {
-            None => return true,
-            Some(index) => println!("Found results in {}:\n", &journal_text[0..index]),
-        }
-
         fn print_highlights(line: &str, find_str_index: usize, symbol: char, count: usize) {
             print!("    ");
 
@@ -630,7 +613,7 @@ fn find_input_loop(name: &OsStr, date: &DateTime<Local>) {
                 }
             }
 
-            for i in 0..count {
+            for _ in 0..count {
                 print!("{}", symbol);
             }
 
@@ -639,7 +622,7 @@ fn find_input_loop(name: &OsStr, date: &DateTime<Local>) {
 
         // find the block where the text is.
         for block in journal_text.split("\n\n") {
-            if let Some(index) = block
+            if let Some(_block_index) = block
                 .to_ascii_lowercase()
                 .find(&find_str.to_ascii_lowercase())
             {
@@ -664,6 +647,12 @@ fn find_input_loop(name: &OsStr, date: &DateTime<Local>) {
             }
         }
 
+        //print journal heading
+        match journal_text.find("\n\n") {
+            None => return true,
+            Some(index) => println!("\n\nFound results in {}:\n", &journal_text[0..index]),
+        }
+
         return false;
     }
 
@@ -680,26 +669,37 @@ fn find_input_loop(name: &OsStr, date: &DateTime<Local>) {
             "Enter search text, or \">\" to go forwards or backwards, or \":quit\" to go back",
         ) {
             clear_screen();
-            let mut new_date = current_date.clone();
+            let new_date;
 
             if find_str_input.trim() == "<" || find_str_input.trim() == "" {
                 new_date = current_date - Duration::days(1);
                 println!("searching backwards from {} ...", new_date);
-                iterate_journals_dir(name, &new_date, Direction::Backwards, |date, journal_text| {
-                    current_date = date.clone();
-                    return iteration(name, date, &find_str, &journal_text);
-                });
+                iterate_journals_dir(
+                    name,
+                    &new_date,
+                    Direction::Backwards,
+                    |date, journal_text| {
+                        current_date = date.clone();
+                        return iteration(name, date, &find_str, &journal_text);
+                    },
+                );
             } else if find_str_input.trim() == ">" {
                 new_date = current_date + Duration::days(1);
                 println!("searching forwards from {} ...", new_date);
-                iterate_journals_dir(name, &new_date, Direction::Forwards, |date, journal_text| {
-                    current_date = date.clone();
-                    return iteration(name, date, &find_str, &journal_text);
-                });
+                iterate_journals_dir(
+                    name,
+                    &new_date,
+                    Direction::Forwards,
+                    |date, journal_text| {
+                        current_date = date.clone();
+                        return iteration(name, date, &find_str, &journal_text);
+                    },
+                );
             } else if find_str_input.trim() == ":quit" {
                 break;
             } else {
                 find_str = find_str_input;
+                current_date = date.clone();
             }
         }
     }
