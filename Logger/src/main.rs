@@ -1,4 +1,4 @@
-use chrono::{self, Date, Datelike, Duration, NaiveDate, Timelike, Weekday, TimeZone};
+use chrono::{self, Date, Datelike, Duration, Timelike, TimeZone};
 use chrono::{DateTime, Local};
 use console::Term;
 use regex::Regex;
@@ -144,7 +144,10 @@ fn main() {
         return;
     }
 
-    let path = PathBuf::from(args[1].clone());
+    let mut path = PathBuf::from(args[1].clone());
+    if path.extension() == None {
+        path.set_extension("txt");
+    }
 
     match read_file(&path) {
         Err(e) => {
