@@ -1,14 +1,16 @@
-use chrono::{self, Datelike, Duration, TimeZone, Timelike, Weekday};
+use chrono::{self, Datelike, Duration, TimeZone, Weekday};
 use chrono::{DateTime, Local};
 use console::Term;
+use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self};
-use std::io::{self, ErrorKind, Write};
+use std::io::{self};
 use std::num::ParseIntError;
 use std::path::{self, Path, PathBuf};
+use std::process::Command;
 use std::str::FromStr;
 
-const JOURNALS_ROOT_DIR: &str = "./Journals";
+const JOURNALS_DIR: &str = "./";
 
 fn now() -> DateTime<Local> {
     Local::now()
@@ -24,18 +26,6 @@ fn two_dig_number(num: u32) -> String {
     }
 
     return format!("{}", num);
-}
-
-fn timestamp(time: &DateTime<Local>) -> String {
-    let (pm, hour) = time.hour12();
-    let am_pm = if pm { "pm" } else { "am" };
-
-    format!(
-        "{}:{} {}",
-        &two_dig_number(hour),
-        &two_dig_number(time.minute()),
-        am_pm
-    )
 }
 
 fn read_file(path: &PathBuf) -> io::Result<String> {
@@ -59,7 +49,7 @@ fn write_file(path: &PathBuf, contents: &str) {
 fn journal_root_dir(name: &OsStr) -> PathBuf {
     let mut path = PathBuf::new();
 
-    path.push(JOURNALS_ROOT_DIR);
+    path.push(JOURNALS_DIR);
     path.push(name);
 
     return path;
@@ -90,46 +80,10 @@ fn new_journal_text(name: &OsStr, date: &DateTime<Local>) -> String {
     format!("{} - {} {}\n", name.to_string_lossy(), weekday, ds)
 }
 
-fn journal_line(date: &DateTime<Local>, indent: usize, contents: &str) -> String {
-    let mut line = String::from("\n");
-
-    for _i in 0..indent {
-        line.push_str("\t");
-    }
-
-    line.push_str(&timestamp(&date));
-    line.push_str(" - ");
-    line.push_str(&contents);
-
-    return line;
-}
-
 fn load_journal_err(name: &OsStr, date: &DateTime<Local>) -> Result<String, std::io::Error> {
     let dir: PathBuf = journal_dir(&name, &date);
 
     return read_file(&dir);
-}
-
-// This will initialize a journal if not present.
-fn load_journal(name: &OsStr, date: &DateTime<Local>) -> String {
-    let datestamp = datestamp(&date);
-    return match load_journal_err(name, date) {
-        Ok(str) => str.replace("\r", ""),
-        Err(e) => {
-            if e.kind() == ErrorKind::NotFound {
-                let text = new_journal_text(name, date);
-                save_journal(name, date, &text);
-                return text;
-            }
-
-            panic!(
-                "Couldn't read the contents journal {} for {}: {}",
-                name.to_string_lossy(),
-                &datestamp,
-                e
-            );
-        }
-    };
 }
 
 fn save_journal(name: &OsStr, date: &DateTime<Local>, text: &str) {
@@ -151,32 +105,12 @@ fn get_input_str() -> String {
     if input == "/exit" {
         clear_screen();
         std::process::exit(0);
-    } else if input.starts_with("?")
-        || input.starts_with("/?")
-        || input.starts_with("?")
-        || input.starts_with("help")
-        || input.starts_with("/help")
-    {
+    } else if input.starts_with("/?") || input.starts_with("help") || input.starts_with("/help") {
         print_help();
         return String::from("");
     }
 
     return input;
-}
-
-fn display_journal(name: &OsStr) {
-    let date = now();
-    let content = load_journal(&name, &date);
-
-    let has_no_entries = content.matches("-").count() < 2;
-    if has_no_entries {
-        println!(
-            "You haven't put any entries in [{}] yet.\nType '/help' at any time to find out how.\n\n",
-            name.to_string_lossy()
-        );
-    }
-
-    println!("{}", &content);
 }
 
 fn get_folders(path: &Path) -> Result<Vec<OsString>, io::Error> {
@@ -204,7 +138,7 @@ fn get_folders(path: &Path) -> Result<Vec<OsString>, io::Error> {
 }
 
 fn get_journals() -> Result<Vec<OsString>, io::Error> {
-    let path = path::Path::new(JOURNALS_ROOT_DIR);
+    let path = path::Path::new(JOURNALS_DIR);
     let res = get_folders(path);
 
     if let Ok(ref journals) = res {
@@ -245,12 +179,6 @@ fn pick_new_journal_name() -> OsString {
         }
 
         let name = OsString::from(name);
-        let date = now();
-
-        if let Err(_) = load_journal_err(&name, &date) {
-            save_journal(&name, &date, &new_journal_text(&name, &date));
-        }
-
         return name;
     }
 }
@@ -303,29 +231,85 @@ fn find_journal(input: &str, journals: &Vec<OsString>) -> Option<OsString> {
 
 fn clear_screen() {
     let term = Term::stdout();
-    term.clear_screen().expect("failed clearing screen");
+    //term.clear_screen().expect("failed clearing screen");
+}
+
+fn open_journal(name: &OsStr, date: &DateTime<Local>, process: &str) {
+    let dir = journal_dir(name, date);
+    if !dir.exists() {
+        save_journal(&name, &date, &new_journal_text(&name, &date));
+    }
+
+    println!(
+        "Opening journal {} for {} in {} ...",
+        name.to_string_lossy(),
+        date,
+        process
+    );
+
+    if cfg!(target_os = "windows") {
+        let mut child = Command::new(process)
+            .arg(format!(
+                "{}",
+                dir.to_str().expect("dir should be a string here")
+            ))
+            .spawn()
+            .expect(&format!(
+                "failed to execute {} on {}",
+                process,
+                dir.to_string_lossy()
+            ));
+
+        let ecode = child
+            .wait()
+            .expect(&format!("Failed to wait for {}", process));
+
+        println!("Exited with code {}.", ecode);
+    } else {
+        println!(
+            "I haven't added a command to open a file on other platforms yet. 
+Go to the github, main.rs -> line 243, add some code and make a PR"
+        );
+    }
+
+    println!("Done");
 }
 
 fn main() {
+    if cfg!(debug_assertions) {
+        env::set_current_dir("Journals");
+    }
+
     let mut name = pick_journal();
     let mut message = String::from("");
+    let journal_opener: String = match read_file(&PathBuf::from("opener.txt")) {
+        Err(e) => {
+            write_file(&PathBuf::from("opener.txt"), "notepad");
+            println!("Change the program used to open logs in opener.txt");
+            get_input_str();
+
+            String::from("notepad")
+        }
+        Ok(text) => text,
+    };
 
     loop {
-        clear_screen();
-        display_journal(&name);
-
         if message.len() > 0 {
             println!("\n{}\n", &message);
             message = String::from("");
         }
 
-        print!("\ncurrent->{}: ", &name.to_string_lossy());
-        if let Err(_) = io::stdout().flush() {
-            //guyse idk how to handle this one
-        }
-
-        let input = get_input_str();
         let date = now();
+        clear_screen();
+
+        println!("{}", message);
+        println!(
+            "\nPress [enter] to open the current journal with {}",
+            &journal_opener
+        );
+        let input = get_input_str();
+
+        open_journal(&name, &date, &journal_opener);
 
         // process input
         if input.trim() == "" || input.trim() == "-" {
@@ -342,10 +326,6 @@ fn main() {
                 name = pick_new_journal_name();
             } else if input.starts_with("/last") || input.starts_with("/prev") {
                 display_prev_journals_input_loop(&name, &date, 20);
-            } else if input.starts_with("/time") {
-                display_time_stats(&name, &date, false);
-            } else if input.starts_with("/gtime") {
-                display_time_stats(&name, &date, true);
             } else if input.starts_with("/find") {
                 find_input_loop(&name, &date);
             }
@@ -354,135 +334,15 @@ fn main() {
         } else if input.starts_with("help") {
             continue;
         }
-
-        match append_to_journal(&name, date, input) {
-            Ok(new_content) => {
-                save_journal(&name, &date, &new_content);
-            }
-            Err(e) => {
-                message = e;
-            }
-        }
     }
 }
 
 fn print_help() {
     clear_screen();
 
-    println!(
-        "
-Help - Saturday 2022/5/21
-
-
-09:50 am - Before we start:
-    09:50 am - Type / help from anywhere to access this text
-    09:50 am - Type /exit from anywhere to exit this program
-
-09:51 am - The basics
-    09:51 am - Type any text to add an 'entry'
-    09:51 am - new entries will be added to the current 'block' of lines
-    09:51 am - like
-    09:51 am - this
-
-09:52 am - Type dash (-) followed by an entry to start a new block
-    09:52 am - Type a (~) on it's own to toggle the last line between being part of a block vs being the start of a new block
-
-09:53 am - (Useful for when you forget a (-) on the line you just entered
-
-09:53 am - Journal Reading
-    09:54 am - Type /prev to view previous entries
-    09:54 am - Type /times to view a time breakdown of how much time elapsed between each block.
-    09:54 am - Type /gtime to show a more granular (but much harder to read) time breakdown between each entry.
-
-09:54 am - Journal Managing
-    09:54 am - You can have multiple journals.
-    09:54 am - Type /new to create a new journal. You will be asked to provide a name.
-    09:54 am - Type /switch to switch to another journal. This will only work if you have more than one journal.
-"
-    );
+    println!("<work in progress>");
 
     println!("Press enter to continue...");
-    get_input_str();
-}
-
-fn display_time_stats(name: &OsStr, date: &DateTime<Local>, granular: bool) {
-    clear_screen();
-    fn parse_time(line: &str, date: &DateTime<Local>) -> Option<DateTime<Local>> {
-        let colon_pos = line.find(":")?;
-
-        let mut hour = line[colon_pos - 2..colon_pos].parse::<u32>().ok()?;
-        let minute = line[colon_pos + 1..colon_pos + 3].parse::<u32>().ok()?;
-
-        if hour != 12 && &line[colon_pos + 4..colon_pos + 6] == "pm" {
-            hour += 12;
-        }
-
-        let time = date.clone().with_hour(hour)?.with_minute(minute)?;
-
-        return Some(time);
-    }
-
-    let text = load_journal(name, date);
-    let mut times: Vec<(DateTime<Local>, &str)> = Vec::new();
-    let mut start = 0;
-
-    while let Some(len) = text[start..].find("\n") {
-        let end = start + len;
-        let line = &text[start..end];
-        if let Some(time) = parse_time(line, date) {
-            times.push((time, line));
-        }
-
-        start = end + 1;
-    }
-
-    let line = &text[start..];
-    if let Some(time) = parse_time(line, date) {
-        times.push((time, line));
-    }
-
-    times.push((now(), "<now>"));
-
-    println!(
-        "Viewing time breakdown{}:\n\n",
-        match granular {
-            false => "",
-            true => " (granular)",
-        }
-    );
-
-    if times.len() > 0 {
-        println!("{}", times[0].1);
-        let mut block_time = times[0].0.clone();
-
-        for i in 1..times.len() {
-            let is_block = times[i].1.find("\t") == None;
-            if is_block {
-                println!("");
-            }
-
-            if is_block || granular {
-                let dt = times[i].0.signed_duration_since(times[i - 1].0);
-                let dt_from_start = times[i].0.signed_duration_since(times[0].0);
-                let dt_from_block = times[i].0.signed_duration_since(block_time);
-                println!(
-                    "\nelapsed:\t\tsince start: {:.2}h      since block: {:.2}h      since last: {:.2}h\n",
-                    (dt_from_start.num_minutes() as f64) / 60.0,
-                    (dt_from_block.num_minutes() as f64) / 60.0,
-                    (dt.num_minutes() as f64) / 60.0
-                );
-            }
-
-            if is_block {
-                block_time = times[i].0.clone();
-                println!("");
-            }
-
-            println!("{}", times[i].1);
-        }
-    }
-
-    println!("\n\npress enter to go back ...");
     get_input_str();
 }
 
@@ -787,83 +647,6 @@ fn display_prev_journals_input_loop(name: &OsStr, date: &DateTime<Local>, page_s
             page = page_num;
         } else {
             break;
-        }
-    }
-}
-
-fn append_to_journal(name: &OsStr, date: DateTime<Local>, input: String) -> Result<String, String> {
-    let mut content = load_journal(name, &date);
-    let has_no_entries = content.matches("-").count() < 2;
-    if input.trim() == "~" {
-        if !has_no_entries {
-            toggle_block(&mut content);
-        } else {
-            return Err(String::from("Can't use '~' when there aren't any entries"));
-        }
-    } else if input.starts_with("-") || has_no_entries {
-        let mut input = input.trim();
-        if input.starts_with("-") {
-            input = &input[1..];
-        }
-
-        push_block(date, &input, &mut content);
-    } else {
-        push_line(date, input, &mut content);
-    }
-
-    Ok(content)
-}
-
-fn push_block(date: DateTime<Local>, input: &str, content: &mut String) {
-    let new_line = journal_line(&date, 0, input.trim());
-    content.push_str("\n");
-    content.push_str(&new_line);
-}
-
-fn push_line(date: DateTime<Local>, input: String, content: &mut String) {
-    let new_line = journal_line(&date, 1, input.trim());
-    content.push_str(&new_line);
-}
-
-fn toggle_block(content: &mut String) {
-    fn newlines_to_nl_tab(content: &mut String, newlines: usize) {
-        let mut new_content = String::from("");
-        new_content.push_str(&content[0..newlines]);
-        new_content.push_str("\n\t");
-        new_content.push_str(&content[(newlines + 2)..]);
-        content.clear();
-        content.push_str(&new_content[..]);
-    }
-
-    fn nl_tab_to_newlines(content: &mut String, nl_tab: usize) {
-        let mut new_content = String::from("");
-        new_content.push_str(&content[0..nl_tab]);
-        new_content.push_str("\n\n");
-        new_content.push_str(&content[(nl_tab + 2)..]);
-        content.clear();
-        content.push_str(&new_content[..]);
-    }
-
-    let a = content.rfind("\n\n");
-    let b = content.rfind("\n\t");
-
-    if a == None && b == None {
-        return;
-    }
-
-    if let Some(newlines) = a {
-        if let Some(nl_tab) = b {
-            if newlines < nl_tab {
-                nl_tab_to_newlines(content, nl_tab);
-            } else {
-                newlines_to_nl_tab(content, newlines);
-            }
-        } else {
-            newlines_to_nl_tab(content, newlines);
-        }
-    } else {
-        if let Some(nl_tab) = b {
-            nl_tab_to_newlines(content, nl_tab);
         }
     }
 }
