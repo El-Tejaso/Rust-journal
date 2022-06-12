@@ -1,5 +1,6 @@
-bro.txt - Saturday 2022/6/11
+bro.txt - Saturday 2022/06/11
 
+10:00 am - trying something
 
 11:11 pm - Lets go bro
 	11:11 pm - Wait this actually works wtf
@@ -13,3 +14,12 @@ bro.txt - Saturday 2022/6/11
 	11:17 pm - This logging software jsut works huh
 	11:17 pm - nice
 	11:17 pm - damn
+	12:06 pm - Ok so does it work
+
+----	Date: 2022/06/12	----
+
+12:06 pm - Yes
+	12:25 pm - Test
+	12:25 pm - Sweet
+	12:25 pm - Ok this is everything we needed
+	01:21 pm - Cool it's working this whole tie

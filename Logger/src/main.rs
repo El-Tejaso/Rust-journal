@@ -1,18 +1,29 @@
-use chrono::{self, Datelike, Duration, Timelike, Weekday};
+use chrono::{self, Date, Datelike, Duration, NaiveDate, Timelike, Weekday, TimeZone};
 use chrono::{DateTime, Local};
-use console::{Term};
+use console::Term;
+use regex::Regex;
 use std::env;
 use std::ffi::OsStr;
 use std::fs::{self};
 use std::io::{self, ErrorKind, Write};
 use std::path::PathBuf;
+use lazy_static::lazy_static;
 
 fn now() -> DateTime<Local> {
     Local::now()
 }
 
+lazy_static! {
+    static ref DATE_RE: Regex = Regex::new(r"(\d{4})/(\d{1,2})/(\d{1,2})").unwrap();
+}
+
 fn datestamp(time: &DateTime<Local>) -> String {
-    format!("{}/{}/{}", time.year(), time.month(), time.day())
+    format!(
+        "{}/{}/{}",
+        time.year(),
+        &two_dig_number(time.month()),
+        &two_dig_number(time.day())
+    )
 }
 
 fn two_dig_number(num: u32) -> String {
@@ -92,7 +103,7 @@ fn get_input_str() -> String {
     input = input.trim_end().to_string();
 
     if input.starts_with(":") || input.starts_with("/") {
-        let command=&input[1..];
+        let command = &input[1..];
         if command == "exit" {
             clear_screen();
             std::process::exit(0);
@@ -122,7 +133,7 @@ fn main() {
         "{}",
         env::current_exe()
             .expect("must be an exe>WTF")
-            .file_prefix()
+            .file_name()
             .expect("file must have a name")
             .to_string_lossy()
     );
@@ -138,8 +149,7 @@ fn main() {
     match read_file(&path) {
         Err(e) => {
             if e.kind() == ErrorKind::NotFound {
-                let name = path.file_prefix().expect("file must have a name");
-
+                let name = path.file_name().expect("file must have a name");
 
                 let content = new_log_text(name, &now());
                 write_log(&path, &content);
@@ -235,14 +245,28 @@ fn display_time_stats(path: &PathBuf, granular: bool) {
     fn duration_to_str(duration: &Duration) -> String {
         let minutes = duration.num_minutes();
         let hours = duration.num_hours();
+        let days = duration.num_days();
 
         let mut str = format!("");
-        if hours > 0 {
-            str += &format!("{:.2}h", hours);
+
+        if hours==0 && minutes==0 && days==0 {
+            return format!("0");
         }
 
-        if hours > 0 && minutes > 0 {
-            str += &format!(" ");
+        if days > 0 {
+            str += &format!("{}d ", days);
+
+            if hours > 0 || minutes > 0 {
+                str += &format!(" ");
+            }
+        }
+
+        if hours > 0 {
+            str += &format!("{:.2}h", hours % 24);
+
+            if minutes > 0 {
+                str += &format!(" ");
+            }
         }
 
         if minutes > 0 {
@@ -253,27 +277,31 @@ fn display_time_stats(path: &PathBuf, granular: bool) {
     }
 
     let text = load_log(path);
-    let mut times: Vec<(DateTime<Local>, &str)> = Vec::new();
-    let mut start = 0;
+    let mut times: Vec<(DateTime<Local>, &str, bool)> = Vec::new();
 
-    // TODO: Fix this  error. we should be parsing this from the file, not doing now()
-    let date = now();
-    while let Some(len) = text[start..].find("\n") {
-        let end = start + len;
-        let line = &text[start..end];
-        if let Some(time) = parse_time(line, &date) {
-            times.push((time, line));
+    let mut current_date_opt: Option<DateTime<Local>> = None;
+    let mut new_date = false;
+    for line in text.split("\n") {
+        let mut is_block = line.find("\t") == None;
+
+        if let Some(parsed_date) = parse_date(line) {
+            current_date_opt = Some(parsed_date.and_hms(0, 0, 0));
+            new_date = true;
         }
+        
+        if let Some(current_date) = current_date_opt {
+            if let Some(time) = parse_time(line, &current_date) {
+                if new_date {
+                    new_date = false;
+                    is_block = true;
+                }
 
-        start = end + 1;
+                times.push((time, line, is_block));
+            }
+        }
     }
 
-    let line = &text[start..];
-    if let Some(time) = parse_time(line, &date) {
-        times.push((time, line));
-    }
-
-    times.push((now(), "<now>"));
+    times.push((now(), "<now>", true));
 
     println!(
         "Viewing time breakdown{}:\n\n",
@@ -288,7 +316,7 @@ fn display_time_stats(path: &PathBuf, granular: bool) {
         let mut block_time = times[0].0.clone();
 
         for i in 1..times.len() {
-            let is_block = times[i].1.find("\t") == None;
+            let is_block = times[i].2;
             if is_block {
                 println!("");
             }
@@ -319,11 +347,50 @@ fn display_time_stats(path: &PathBuf, granular: bool) {
     get_input_str();
 }
 
+fn parse_date(line : &str) -> Option<Date<Local>> {
+    for cap in DATE_RE.captures_iter(line) {
+        let y = (&cap[1]).parse::<i32>().unwrap();
+        let m = (&cap[2]).parse::<u32>().unwrap();
+        let d = (&cap[3]).parse::<u32>().unwrap();
+
+        return Some(Local.ymd(y, m, d));
+    }
+
+    return None;
+}
+
 fn append_to_log(path: &PathBuf, input: String) -> Result<String, String> {
     let mut content = load_log(path);
     let has_no_entries = content.matches("-").count() < 2;
-
     let date = now();
+
+    // append a line containing today's date if it doesn't already exist, or if the date there is old.
+    let mut is_new_day: bool = false;
+    'outer: for line in content.rsplit("\n") {
+        if line.trim().len() == 0 || line.contains("am") || line.contains("pm") {
+            continue;
+        }
+
+        if let Some(date) = parse_date(line) {
+            let y = date.year();
+            let m = date.month();
+            let d = date.day();
+
+            if y < date.year() || m < date.month() || d < date.day() {
+                is_new_day = true;
+            } else {
+                is_new_day = false;
+            }
+    
+            break 'outer;
+        }
+    }
+
+    if is_new_day {
+        content.push_str(&format!("\n\n----\tDate: {}\t----\n\n", datestamp(&date)));
+    }
+
+    // append actual content
 
     if input.trim() == "~" {
         if !has_no_entries {
