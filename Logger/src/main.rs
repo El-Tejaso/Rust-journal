@@ -139,12 +139,13 @@ fn main() {
     );
     let name = &exe_name;
 
-    if args.len() < 2 {
-        println!("usage: {} [filepath]", name);
-        return;
-    }
+    let mut path = if args.len() < 2 {
+        println!("Enter the file you want to open:");
+        PathBuf::from(get_input_str())
+    } else {
+        PathBuf::from(args[1].clone())
+    };
 
-    let mut path = PathBuf::from(args[1].clone());
     if path.extension() == None {
         path.set_extension("txt");
     }
@@ -369,15 +370,11 @@ fn append_to_log(path: &PathBuf, input: String) -> Result<String, String> {
 
     // append a line containing today's date if it doesn't already exist, or if the date there is old.
     let mut is_new_day: bool = false;
-    'outer: for line in content.rsplit("\n") {
-        if line.trim().len() == 0 || line.contains("am") || line.contains("pm") {
-            continue;
-        }
-
-        if let Some(date) = parse_date(line) {
-            let y = date.year();
-            let m = date.month();
-            let d = date.day();
+    for line in content.rsplit("\n") {
+        if let Some(parsed_date) = parse_date(line) {
+            let y = parsed_date.year();
+            let m = parsed_date.month();
+            let d = parsed_date.day();
 
             if y < date.year() || m < date.month() || d < date.day() {
                 is_new_day = true;
@@ -385,7 +382,7 @@ fn append_to_log(path: &PathBuf, input: String) -> Result<String, String> {
                 is_new_day = false;
             }
     
-            break 'outer;
+            break;
         }
     }
 
@@ -401,7 +398,7 @@ fn append_to_log(path: &PathBuf, input: String) -> Result<String, String> {
         } else {
             return Err(String::from("Can't use '~' when there aren't any entries"));
         }
-    } else if input.starts_with("-") || has_no_entries {
+    } else if input.starts_with("-") || has_no_entries || is_new_day {
         let mut input = &input[..];
         if input.starts_with("-") {
             input = &input[1..];

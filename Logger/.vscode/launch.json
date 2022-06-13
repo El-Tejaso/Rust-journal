@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'journal'",
+            "name": "Debug executable 'logger'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=journal",
-                    "--package=journal"
+                    "--bin=logger",
+                    "--package=logger"
                 ],
                 "filter": {
-                    "name": "journal",
+                    "name": "logger",
                     "kind": "bin"
                 }
             },
@@ -26,16 +26,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'journal'",
+            "name": "Debug unit tests in executable 'logger'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=journal",
-                    "--package=journal"
+                    "--bin=logger",
+                    "--package=logger"
                 ],
                 "filter": {
-                    "name": "journal",
+                    "name": "logger",
                     "kind": "bin"
                 }
             },
