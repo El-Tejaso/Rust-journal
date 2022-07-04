@@ -62,6 +62,7 @@ fn read_list(path: &PathBuf) -> Vec<String> {
     let list = contents
         .split("\n")
         .map(|x| String::from(x))
+        .filter(|x| x.len() > 0)
         .collect::<Vec<String>>();
 
     return list;
@@ -73,15 +74,28 @@ fn write_list(list: &Vec<String>, path: &PathBuf) {
 }
 
 fn print_help() {
-    println!(
-        "Syntax:
-e (or enqueue) [text]                      Enqueue at the start of the list (the default action)
+    println!("
+Syntax:
+a (or append or add) [text]                Append to the end of the list (the default action)
+e (or enqueue) [text]                      Enqueue at the start of the list
 i (or insert) [number] [text]              Insert at a position in the list
-a (or append or add) [text]                Add to the end of the list
-r (or remove) [number]                     Remove from list (negative numbers wrap back around)
-m (or move) [number src] [number dst]      Move item in list
+x (or remove or rm) [number]               Remove from list at a position
+m (or move) [number src] [number dst]      Move item in list to a position
+r (or rename) [number] [text]              Rename item in list at a position
+t (or tag) [number] [text]                 Add or change the tag of a task at a position
+(negative numbers wrap back around)
 "
     );
+}
+
+enum Command {
+    Enqueue,
+    Insert,
+    Append,
+    Remove,
+    Move,
+    Rename,
+    Tag
 }
 
 fn main() {
@@ -139,33 +153,62 @@ fn main() {
         return None;
     }
 
+    let mut failed = false;
+
     // REPL
     loop {
         // print
         let mut list = read_list(&path);
         print_list(&path.file_name().unwrap().to_string_lossy(), &list);
 
+        // also print error from last run. We do it here so it appears after the list
+        if failed {
+            print_help();
+        }
+
+        failed = false;
+
         // read
-        let input = get_input_str();
+        let original_input = get_input_str();
+
+        if original_input == "help" {
+            failed = true;
+            continue;
+        }
 
         // evaluate
         clear_screen();
-        let mut failed = true;
-        match input.split_once(' ') {
-            Some((command, input)) => {
-                let input_raw = input;
-                let input = String::from(input);
+        match original_input.split_once(' ') {
+            Some((command_str, input)) => {
+                let mut input_raw = input;
+                let mut input = String::from(input);
+
+                let command = match command_str {
+                    "e" | "enqueue" => Command::Enqueue,
+                    "a" | "add" | "append" => Command::Append,
+                    "x" | "rm" | "remove" => Command::Remove,
+                    "m" | "move" => Command::Move,
+                    "i" | "insert" => Command::Insert,
+                    "t" | "tag" => Command::Tag,
+                    "r" | "rename" => Command::Rename,
+                    _ => {
+                        input = original_input.clone();
+                        input_raw = &input[..];
+
+                        Command::Append
+                    }
+                };
 
                 match command {
-                    "e" | "enqueue" => {
+                    Command::Enqueue => {
                         list.insert(0, input);
                         failed = false;
                     }
-                    "a" | "add" | "append" => {
+                    Command::Append => {
                         list.push(input);
                         failed = false;
                     }
-                    "r" | "remove" => {
+                    Command::Remove => {
                         if let Some(index) = parse_and_wrap(input_raw, list.len()) {
                             if index < list.len() {
                                 list.remove(index);
@@ -173,7 +216,7 @@ fn main() {
                             }
                         }
                     }
-                    "m" | "move" => {
+                    Command::Move => {
                         if let Some((src, dst)) = input.split_once(' ') {
                             if let Some(src_idx) = parse_and_wrap(src, list.len()) {
                                 if let Some(dst_idx) = parse_and_wrap(dst, list.len()) {
@@ -186,7 +229,7 @@ fn main() {
                             }
                         }
                     }
-                    "i" | "insert" => {
+                    Command::Insert => {
                         if let Some((dst, item)) = input.split_once(' ') {
                             if let Some(dst_idx) = parse_and_wrap(dst, list.len()) {
                                 if dst_idx < list.len() {
@@ -196,14 +239,42 @@ fn main() {
                             }
                         }
                     }
-                    _ => {}
+                    Command::Rename => {
+                        if let Some((dst, item)) = input.split_once(' ') {
+                            if let Some(dst_idx) = parse_and_wrap(dst, list.len()) {
+                                if dst_idx < list.len() {
+                                    list[dst_idx] = String::from(item);
+                                    failed = false;
+                                }
+                            }
+                        }
+                    }
+                    Command::Tag => {
+                        if let Some((dst, item)) = input.split_once(' ') {
+                            if let Some(dst_idx) = parse_and_wrap(dst, list.len()) {
+                                if dst_idx < list.len() {
+                                    let mut current_item = &list[dst_idx][..];
+                                    if current_item.contains('|') {
+                                        current_item = &current_item[0..current_item.find('|').unwrap()];
+                                    }
+
+                                    if item != "x" {
+                                        list[dst_idx] = format!("{} | {}", current_item.trim(), item);
+                                    } else {
+                                        list[dst_idx] = format!("{}", current_item.trim())
+                                    }
+                                        
+                                    failed = false;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             None => {}
         }
 
         if failed {
-            print_help();
             continue;
         }
 
@@ -212,14 +283,31 @@ fn main() {
 }
 
 fn print_list(filename: &str, list: &Vec<String>) {
-    println!(
+    let header = format!(
         "\n________________________________ {} ________________________________",
         filename
     );
+    println!("{}", header);
     println!("{} |", " ".repeat(pad(0, list.len()).len()));
+    
+    // this is where we will indent the tags to 
+    let width = header.len() - 10;
 
     for (i, line) in list.iter().enumerate() {
-        println!("{} | {}", &pad(i + 1, list.len()), line);
+        print!("{} | ", &pad(i + 1, list.len()));
+
+        if line.contains('|') {
+            let (text, tag) = line.split_once('|').unwrap();
+
+            if text.len() < width {
+                println!("{}{}> {}", text, "-".repeat(width - text.len()) ,tag);
+            } else {
+                println!("{}{}> {}", text, "--" ,tag);
+            }
+        } else {
+            println!("{}", line);
+        }
+
     }
 
     println!("\n<end of list>\n")

@@ -1,6 +1,9 @@
-Open this file with the list program
+New Item 33 | this is a P1
+Open this bruh | lets go
 It works well enough for me to stop developing it further I think
 I am using this file to test it out
 Each line of this list is treated as an individual entry
-New Item 33
 Yep
+go
+it still work tho
+how about now
