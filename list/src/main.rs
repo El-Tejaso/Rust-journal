@@ -300,9 +300,9 @@ fn print_list(filename: &str, list: &Vec<String>) {
             let (text, tag) = line.split_once('|').unwrap();
 
             if text.len() < width {
-                println!("{}{}> {}", text, "-".repeat(width - text.len()) ,tag);
+                println!("{} <{} {}", text, "-".repeat(width - text.len()) ,tag);
             } else {
-                println!("{}{}> {}", text, "--" ,tag);
+                println!("{} <{} {}", text, "--" ,tag);
             }
         } else {
             println!("{}", line);
